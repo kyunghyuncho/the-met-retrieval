@@ -113,6 +113,44 @@ async def augment_dataframe(df):
     logging.info("Wikipedia augmentation completed.")
     return df
 
+async def fetch_image_url(session, object_id, semaphore):
+    async with semaphore:
+        try:
+            api_url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
+            async with session.get(api_url, timeout=5) as res:
+                if res.status == 200:
+                    data = await res.json()
+                    return data.get('primaryImageSmall') or data.get('primaryImage')
+        except Exception:
+            pass
+    return None
+
+async def augment_image_urls(df):
+    logging.info("Starting Met API Image URLs harvesting...")
+    semaphore = asyncio.Semaphore(50)
+    
+    object_ids = df['Object ID'].tolist()
+    results = []
+    
+    async with aiohttp.ClientSession() as session:
+        chunk_size = 5000
+        for i in range(0, len(object_ids), chunk_size):
+            chunk = object_ids[i:i+chunk_size]
+            tasks = [fetch_image_url(session, obj_id, semaphore) for obj_id in chunk]
+            res = await asyncio.gather(*tasks)
+            results.extend(res)
+            logging.info(f"Harvested {min(i+chunk_size, len(object_ids))} / {len(object_ids)} image records...")
+
+    df['Primary Image'] = results
+    
+    # Explicitly drop items that failed to resolve a visual component, as the contrastive model demands it
+    initial_len = len(df)
+    df = df.dropna(subset=['Primary Image'])
+    df = df[df['Primary Image'] != ""]
+    logging.info(f"Met API Image harvesting completed. Retained {len(df)} / {initial_len} valid items.")
+    return df
+
+
 def generate_base_string(row):
     # Format: "Artifact: {Object Name}. Title: {Title}. Origin: {Culture}. Period: {Object Date}. Medium: {Medium}."
     parts = []
@@ -139,11 +177,10 @@ async def main():
     
     df = df[(df[bool_col] == True) & (df['Object Name'].notna())]
     
-    p_img_col = "Primary Image" if "Primary Image" in df.columns else None
-    if p_img_col:
-        df = df[df[p_img_col].notna() & (df[p_img_col] != '')]
-        
     df = df.drop_duplicates(subset=['Object ID'])
+    
+    # Asynchronous Image Harvesting via Met API
+    df = await augment_image_urls(df)
     
     logging.info(f"Loaded {len(df)} public domain artifacts with images.")
     

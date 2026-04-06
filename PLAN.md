@@ -26,8 +26,9 @@ This phase executes strictly outside the web application lifecycle. It produces 
 * **Target:** The Metropolitan Museum of Art Open Access CSV.
 * **Data Cleaning Sequence:**
     1.  Load via `pandas`.
-    2.  Filter: `df = df[(df['Is Public Domain'] == True) & (df['Object Name'].notna()) & (df['Primary Image'].notna())]`.
+    2.  Filter: `df = df[(df['Is Public Domain'] == True) & (df['Object Name'].notna())]`.
     3.  Drop duplicates based on the `Object ID` column.
+* **REST API Image Harvester:** Asynchronously map over `https://collectionapi.metmuseum.org/public/collection/v1/objects/{ObjectID}`. Because the static CSV strictly lacks the `.jpg` strings, the ingestion pipeline proactively fetches `primaryImageSmall` and filters out instances completely lacking a valid visual component prior to saving.
 * **Hybrid Text Serialization Algorithm:**
     * **Step A (Deterministic Base):** Construct a base string for all rows. Format: `"Artifact: {Object Name}. Title: {Title}. Origin: {Culture}. Period: {Object Date}. Medium: {Medium}."` Missing values must be dynamically omitted rather than injecting "NaN" strings.
     * **Step B (Asynchronous Augmentation):** Isolate rows containing a valid `Wikidata URL`. Utilize `aiohttp` with a concurrency limit (e.g., `asyncio.Semaphore(10)`) to query the Wikidata SPARQL endpoint, retrieve the linked English Wikipedia article title, and subsequently query the Wikipedia REST API (`/api/rest_v1/page/summary/{title}`).
