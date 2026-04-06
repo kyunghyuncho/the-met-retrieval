@@ -12,7 +12,7 @@ interface AppState {
   isTraining: boolean;
   sessionId: string | null;
   telemetryHistory: TelemetryData[];
-  setTrainingStatus: (status: boolean, sessionId?: string) => void;
+  setTrainingStatus: (status: boolean, sessionId?: string | null) => void;
   addTelemetry: (data: TelemetryData) => void;
   resetTelemetry: () => void;
 }

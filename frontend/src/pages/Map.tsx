@@ -42,7 +42,7 @@ export default function MapView() {
       radiusMaxPixels: 10,
       lineWidthMinPixels: 1,
       getPosition: (d: any) => [d.longitude, d.latitude],
-      getFillColor: (d: any) => {
+      getFillColor: () => {
         // Simplified mapping for aesthetics. E.g. randomish distribution or based on age.
         // A full implementation would parse d.age string properly.
         return [45, 212, 191, 150]; // Teal 400
@@ -79,7 +79,7 @@ export default function MapView() {
           or a simple tile layer wrapper. For simple visualization of coordinates, points will outline the map. */}
       <div className="absolute inset-4 rounded-xl border border-slate-800 overflow-hidden bg-slate-900/50">
         <DeckGL
-          initialViewState={INITIAL_VIEW_STATE}
+          initialViewState={INITIAL_VIEW_STATE as any}
           controller={true}
           layers={layers}
           getTooltip={(info: any) => info.object ? `Artifact ID: ${info.object.id}\nLocation: ${info.object.longitude.toFixed(2)}, ${info.object.latitude.toFixed(2)}` : null}

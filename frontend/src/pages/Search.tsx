@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Search as SearchIcon, Image as ImageIcon, Loader2 } from 'lucide-react';
 
 export default function Search() {
