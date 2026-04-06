@@ -1,0 +1,24 @@
+[project]
+name = "the-met-retrieval"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.13.4",
+    "faiss-cpu>=1.13.2",
+    "fastapi>=0.135.2",
+    "fastparquet>=2026.3.0",
+    "geojson>=3.2.0",
+    "geopy>=2.4.1",
+    "lightning>=2.6.1",
+    "pandas>=2.3.3",
+    "pyarrow>=23.0.1",
+    "pydantic>=2.12.5",
+    "python-multipart>=0.0.22",
+    "ruff>=0.15.8",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+    "transformers>=5.4.0",
+    "uvicorn>=0.42.0",
+]
