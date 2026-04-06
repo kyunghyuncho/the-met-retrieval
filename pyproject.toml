@@ -16,6 +16,7 @@ dependencies = [
     "pyarrow>=23.0.1",
     "pydantic>=2.12.5",
     "python-multipart>=0.0.22",
+    "requests>=2.33.1",
     "ruff>=0.15.8",
     "torch>=2.11.0",
     "torchvision>=0.26.0",
