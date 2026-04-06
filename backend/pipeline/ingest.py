@@ -131,17 +131,17 @@ async def fetch_image_url(session, object_id, semaphore, max_retries=3):
                         logging.warning(f"Rate limited (429) on ID={object_id}, waiting {wait}s...")
                         await asyncio.sleep(wait)
                         continue
+                    elif res.status in (404, 400, 403):
+                        # Permanent failures — do not retry
+                        return None
                     else:
-                        if attempt == 0:
-                            logging.debug(f"ID={object_id}: HTTP {res.status}")
+                        # 5xx or other transient — retry
                         await asyncio.sleep(2 * (attempt + 1))
                         continue
             except asyncio.TimeoutError:
-                logging.debug(f"ID={object_id}: timeout (attempt {attempt+1})")
                 await asyncio.sleep(2 * (attempt + 1))
                 continue
-            except aiohttp.ClientError as e:
-                logging.debug(f"ID={object_id}: client error {type(e).__name__} (attempt {attempt+1})")
+            except aiohttp.ClientError:
                 await asyncio.sleep(2 * (attempt + 1))
                 continue
             except Exception as e:
