@@ -1,9 +1,10 @@
 import pandas as pd
 import time
 from pathlib import Path
-from geopy.geocoders import Nominatim
+from geopy.geocoders import Nominatim, GoogleV3
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -25,9 +26,17 @@ def get_location_string(row):
     return ", ".join(parts) if parts else ""
 
 def geocode_unique_locations(unique_locations):
-    geolocator = Nominatim(user_agent="met_antiquities_pedagogical_app", timeout=10)
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+    if not api_key:
+        logging.error("GOOGLE_MAPS_API_KEY environment variable is not set. Switching back to slow Nominatim...")
+        geolocator = Nominatim(user_agent="met_antiquities_pedagogical_app", timeout=10)
+        sleep_time = 1.1
+    else:
+        logging.info("Using Google Maps Geocoding API for high-speed resolution.")
+        geolocator = GoogleV3(api_key=api_key, timeout=10)
+        sleep_time = 0.02  # Maximum 50 QPS support
+
     mapping = {}
-    
     total = len(unique_locations)
     logging.info(f"Found {total} unique locations to geocode.")
     
@@ -37,8 +46,7 @@ def geocode_unique_locations(unique_locations):
             continue
             
         try:
-            # Nominatim requires 1 request per second max
-            time.sleep(1.1)
+            time.sleep(sleep_time)
             location = geolocator.geocode(loc)
             if location:
                 mapping[loc] = (location.latitude, location.longitude)
