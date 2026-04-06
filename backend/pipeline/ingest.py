@@ -113,41 +113,64 @@ async def augment_dataframe(df):
     logging.info("Wikipedia augmentation completed.")
     return df
 
-async def fetch_image_url(session, object_id, semaphore):
-    async with semaphore:
-        try:
-            api_url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
-            async with session.get(api_url, timeout=5) as res:
-                if res.status == 200:
-                    data = await res.json()
-                    return data.get('primaryImageSmall') or data.get('primaryImage')
-        except Exception:
-            pass
+async def fetch_image_url(session, object_id, semaphore, max_retries=3):
+    """Fetch the primary image URL for a single Met object, with exponential backoff."""
+    for attempt in range(max_retries):
+        async with semaphore:
+            try:
+                api_url = f"https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
+                timeout = aiohttp.ClientTimeout(total=30)
+                async with session.get(api_url, timeout=timeout) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        return data.get('primaryImageSmall') or data.get('primaryImage')
+                    elif res.status == 429:
+                        # Rate limited — back off and retry
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+            except (asyncio.TimeoutError, aiohttp.ClientError):
+                await asyncio.sleep(1 * (attempt + 1))
+                continue
+            except Exception:
+                pass
+        break  # Non-retryable failure
     return None
 
 async def augment_image_urls(df):
     logging.info("Starting Met API Image URLs harvesting...")
-    semaphore = asyncio.Semaphore(50)
-    
+    semaphore = asyncio.Semaphore(20)
+
     object_ids = df['Object ID'].tolist()
     results = []
-    
-    async with aiohttp.ClientSession() as session:
-        chunk_size = 5000
+    total_failures = 0
+
+    connector = aiohttp.TCPConnector(limit=20, force_close=False)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        chunk_size = 2000
         for i in range(0, len(object_ids), chunk_size):
             chunk = object_ids[i:i+chunk_size]
             tasks = [fetch_image_url(session, obj_id, semaphore) for obj_id in chunk]
             res = await asyncio.gather(*tasks)
+            chunk_failures = sum(1 for r in res if r is None)
+            total_failures += chunk_failures
             results.extend(res)
-            logging.info(f"Harvested {min(i+chunk_size, len(object_ids))} / {len(object_ids)} image records...")
+            resolved = sum(1 for r in res if r is not None)
+            logging.info(
+                f"Chunk {i+chunk_size}/{len(object_ids)}: "
+                f"{resolved} resolved, {chunk_failures} failed"
+            )
 
     df['Primary Image'] = results
-    
-    # Explicitly drop items that failed to resolve a visual component, as the contrastive model demands it
+
+    # Explicitly drop items that failed to resolve a visual component
     initial_len = len(df)
     df = df.dropna(subset=['Primary Image'])
     df = df[df['Primary Image'] != ""]
-    logging.info(f"Met API Image harvesting completed. Retained {len(df)} / {initial_len} valid items.")
+    logging.info(
+        f"Met API Image harvesting completed. "
+        f"Retained {len(df)} / {initial_len} valid items. "
+        f"Total API failures: {total_failures}"
+    )
     return df
 
 
