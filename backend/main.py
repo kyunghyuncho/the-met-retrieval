@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI):
     app.state.device = device
     
     try:
-        app.state.image_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-vits14")
-        app.state.image_model = AutoModel.from_pretrained("facebook/dinov2-vits14").to(device).eval()
+        app.state.image_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-small")
+        app.state.image_model = AutoModel.from_pretrained("facebook/dinov2-small").to(device).eval()
         app.state.tokenizer = AutoTokenizer.from_pretrained("nomic-ai/nomic-embed-text-v1.5")
         app.state.text_model = AutoModel.from_pretrained("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True).to(device).eval()
     except Exception as e:

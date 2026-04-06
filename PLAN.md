@@ -40,7 +40,7 @@ This phase executes strictly outside the web application lifecycle. It produces 
 * **Output:** Append two strictly typed float columns to the dataset: `Latitude` and `Longitude`. Rows failing resolution default to `0.0, 0.0` or a predefined "Unknown" coordinate block.
 
 ### 2.3 Feature Extraction and Storage
-* **Image Processing (`dinov2-vits14`):** Define a standard `torchvision.transforms` pipeline (Resize to 256, CenterCrop to 224, Normalize using ImageNet statistics). Process the downloaded images in batches of $B=64$ (or maximum VRAM capacity).
+* **Image Processing (`dinov2-small`):** Define a standard `torchvision.transforms` pipeline (Resize to 256, CenterCrop to 224, Normalize using ImageNet statistics). Process the downloaded images in batches of $B=64$ (or maximum VRAM capacity).
 * **Text Processing (`nomic-embed-text-v1.5`):** Tokenize the final serialized text columns with `truncation=True, max_length=512`. Prefix all strings with `search_document:`.
 * **Serialization Format:** Save the extracted features as monolithic `.safetensors` or `.pt` files to enable memory-mapping. The files must be named `images_unprojected.pt` ($N \times 384$) and `text_unprojected.pt` ($N \times 768$).
 * **Metadata Index:** Save the enriched `pandas` DataFrame (containing Object IDs, URLs, resolved text, and lat/lon) as `metadata_index.parquet` to preserve data types and enable rapid loading in FastAPI.

@@ -61,9 +61,9 @@ def main():
     df = pd.read_parquet(INPUT_PATH)
     
     # Initialize models
-    logging.info("Loading dinov2-vits14 for images...")
-    image_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-vits14")
-    image_model = AutoModel.from_pretrained("facebook/dinov2-vits14").to(device)
+    logging.info("Loading dinov2-small for images...")
+    image_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-small")
+    image_model = AutoModel.from_pretrained("facebook/dinov2-small").to(device)
     
     logging.info("Loading nomic-embed-text-v1.5 for text...")
     tokenizer = AutoTokenizer.from_pretrained("nomic-ai/nomic-embed-text-v1.5")

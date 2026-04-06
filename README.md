@@ -5,7 +5,7 @@ This repository contains a pedagogical implementation of a cross-modal retrieval
 ## Architecture Highlights
 
 *   **Backend:** FastAPI for asynchronous HTTP handling and WebSocket streaming, enabling non-blocking serving of heavy PyTorch workloads.
-*   **Modeling:** A custom PyTorch Lightning model mapping `dinov2-vits14` and `nomic-embed-text-v1.5` embeddings into a unified joint latent space ($d_{joint}=512$) via InfoNCE contrastive loss.
+*   **Modeling:** A custom PyTorch Lightning model mapping `dinov2-small` and `nomic-embed-text-v1.5` embeddings into a unified joint latent space ($d_{joint}=512$) via InfoNCE contrastive loss.
 *   **Vector Search:** `faiss-cpu` utilizing `IndexFlatIP` since embeddings are $L_2$ normalized before querying.
 *   **Frontend:** Vite/React 18 structured with Tailwind CSS v4, utilizing Zustand for global websocket telemetry mapping on Recharts, and Deck.gl for geospatial plotting (Nominatim/OpenStreetMap coordinates).
 
