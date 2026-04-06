@@ -114,7 +114,7 @@ async def augment_dataframe(df):
     return df
 
 async def fetch_image_url(session, object_id, semaphore, max_retries=3):
-    """Fetch the primary image URL for a single Met object, with exponential backoff."""
+    """Fetch the primary image URL for a single Met object, with retry and pacing."""
     for attempt in range(max_retries):
         async with semaphore:
             try:
@@ -123,53 +123,91 @@ async def fetch_image_url(session, object_id, semaphore, max_retries=3):
                 async with session.get(api_url, timeout=timeout) as res:
                     if res.status == 200:
                         data = await res.json()
-                        return data.get('primaryImageSmall') or data.get('primaryImage')
+                        url = data.get('primaryImageSmall') or data.get('primaryImage')
+                        await asyncio.sleep(0.05)  # gentle pacing
+                        return url
                     elif res.status == 429:
-                        # Rate limited — back off and retry
-                        await asyncio.sleep(2 ** attempt)
+                        wait = 5 * (attempt + 1)
+                        logging.warning(f"Rate limited (429) on ID={object_id}, waiting {wait}s...")
+                        await asyncio.sleep(wait)
                         continue
-            except (asyncio.TimeoutError, aiohttp.ClientError):
-                await asyncio.sleep(1 * (attempt + 1))
+                    else:
+                        if attempt == 0:
+                            logging.debug(f"ID={object_id}: HTTP {res.status}")
+                        await asyncio.sleep(2 * (attempt + 1))
+                        continue
+            except asyncio.TimeoutError:
+                logging.debug(f"ID={object_id}: timeout (attempt {attempt+1})")
+                await asyncio.sleep(2 * (attempt + 1))
                 continue
-            except Exception:
-                pass
-        break  # Non-retryable failure
+            except aiohttp.ClientError as e:
+                logging.debug(f"ID={object_id}: client error {type(e).__name__} (attempt {attempt+1})")
+                await asyncio.sleep(2 * (attempt + 1))
+                continue
+            except Exception as e:
+                logging.warning(f"ID={object_id}: unexpected error {type(e).__name__}: {e}")
+                break
     return None
 
+CHECKPOINT_PATH = DATA_DIR / "image_urls_checkpoint.json"
+
 async def augment_image_urls(df):
-    logging.info("Starting Met API Image URLs harvesting...")
-    semaphore = asyncio.Semaphore(20)
+    logging.info("Starting Met API Image URL harvesting...")
 
     object_ids = df['Object ID'].tolist()
-    results = []
-    total_failures = 0
 
-    connector = aiohttp.TCPConnector(limit=20, force_close=False)
+    # --- Resume from checkpoint if available ---
+    import json
+    cached_results = {}
+    if CHECKPOINT_PATH.exists():
+        with open(CHECKPOINT_PATH, 'r') as f:
+            cached_results = json.load(f)
+        logging.info(f"Resuming from checkpoint: {len(cached_results)} cached entries found.")
+
+    # Identify which IDs still need fetching
+    ids_to_fetch = [oid for oid in object_ids if str(oid) not in cached_results]
+    logging.info(f"Total: {len(object_ids)}, cached: {len(cached_results)}, remaining: {len(ids_to_fetch)}")
+
+    # --- Fetch in small batches with conservative rate limiting ---
+    semaphore = asyncio.Semaphore(5)
+    connector = aiohttp.TCPConnector(limit=5, force_close=True)
     async with aiohttp.ClientSession(connector=connector) as session:
-        chunk_size = 2000
-        for i in range(0, len(object_ids), chunk_size):
-            chunk = object_ids[i:i+chunk_size]
-            tasks = [fetch_image_url(session, obj_id, semaphore) for obj_id in chunk]
+        chunk_size = 500
+        for i in range(0, len(ids_to_fetch), chunk_size):
+            chunk = ids_to_fetch[i:i+chunk_size]
+            tasks = [fetch_image_url(session, oid, semaphore) for oid in chunk]
             res = await asyncio.gather(*tasks)
-            chunk_failures = sum(1 for r in res if r is None)
-            total_failures += chunk_failures
-            results.extend(res)
+
+            for oid, url in zip(chunk, res):
+                cached_results[str(oid)] = url
+
             resolved = sum(1 for r in res if r is not None)
+            failed = sum(1 for r in res if r is None)
+            total_done = len(cached_results)
             logging.info(
-                f"Chunk {i+chunk_size}/{len(object_ids)}: "
-                f"{resolved} resolved, {chunk_failures} failed"
+                f"Batch {i+len(chunk)}/{len(ids_to_fetch)}: "
+                f"{resolved} resolved, {failed} failed "
+                f"(total cached: {total_done})"
             )
 
-    df['Primary Image'] = results
+            # Checkpoint to disk every batch
+            with open(CHECKPOINT_PATH, 'w') as f:
+                json.dump(cached_results, f)
 
-    # Explicitly drop items that failed to resolve a visual component
+            # If an entire batch fails, the API might be throttling — pause
+            if resolved == 0 and failed > 0:
+                logging.warning("Entire batch failed. Pausing 30s before continuing...")
+                await asyncio.sleep(30)
+
+    # --- Reconstruct the Primary Image column from cache ---
+    df['Primary Image'] = [cached_results.get(str(oid)) for oid in object_ids]
+
     initial_len = len(df)
     df = df.dropna(subset=['Primary Image'])
     df = df[df['Primary Image'] != ""]
     logging.info(
-        f"Met API Image harvesting completed. "
-        f"Retained {len(df)} / {initial_len} valid items. "
-        f"Total API failures: {total_failures}"
+        f"Image harvesting complete. "
+        f"Retained {len(df)} / {initial_len} artifacts with valid images."
     )
     return df
 
