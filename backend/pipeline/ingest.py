@@ -25,57 +25,79 @@ def download_csv():
                 f.write(chunk)
         logging.info("Download completed.")
 
-async def fetch_wikidata_summary(session, url, semaphore):
-    # Extracts the Wikipedia or Wikidata summary
-    # Wikidata URL: http://www.wikidata.org/entity/Q12345
-    # For now, if the wiki data URL is present, we could just ping it.
-    # But PLAN says: "retrieve the linked English Wikipedia article title, and subsequently query the Wikipedia REST API"
-    if not isinstance(url, str) or not url.startswith("http"):
-        return None
+async def fetch_wikipedia_extract(session, row, semaphore):
+    # Try Wikidata URL first if it exists
+    url = row.get("Wikidata URL") if "Wikidata URL" in row else None
+    if isinstance(url, str) and url.startswith("http"):
+        entity_id = url.split('/')[-1]
+        wikidata_api = f"https://www.wikidata.org/wiki/Special:EntityData/{entity_id}.json"
+        
+        async with semaphore:
+            try:
+                async with session.get(wikidata_api, timeout=5) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        entities = data.get("entities", {})
+                        if entity_id in entities:
+                            sitelinks = entities[entity_id].get("sitelinks", {})
+                            if "enwiki" in sitelinks:
+                                title = sitelinks["enwiki"].get("title")
+                                if title:
+                                    wiki_res = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(title)}"
+                                    async with session.get(wiki_res, timeout=5) as wiki_response:
+                                        if wiki_response.status == 200:
+                                            wiki_data = await wiki_response.json()
+                                            return wiki_data.get("extract")
+            except Exception:
+                pass
 
-    entity_id = url.split('/')[-1]
-    
-    # query wikidata for english wikipedia sitelink title
-    wikidata_api = f"https://www.wikidata.org/wiki/Special:EntityData/{entity_id}.json"
-    
-    async with semaphore:
-        try:
-            async with session.get(wikidata_api, timeout=5) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    entities = data.get("entities", {})
-                    if entity_id in entities:
-                        sitelinks = entities[entity_id].get("sitelinks", {})
-                        if "enwiki" in sitelinks:
-                            title = sitelinks["enwiki"].get("title")
-                            if title:
-                                # Query wikipedia REST API
-                                wiki_res = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(title)}"
-                                async with session.get(wiki_res, timeout=5) as wiki_response:
+    # Fallback to programmatic search
+    title = str(row.get('Title', ''))
+    if len(title) > 8 and title.lower() != "nan":
+        culture = str(row.get('Culture', ''))
+        query = f"{title}"
+        if culture and culture.lower() != "nan":
+            query += f" {culture}"
+        
+        async with semaphore:
+            try:
+                search_url = f"https://en.wikipedia.org/w/rest.php/v1/search/page?q={requests.utils.quote(query)}&limit=1"
+                async with session.get(search_url, timeout=5) as search_res:
+                    if search_res.status == 200:
+                        search_data = await search_res.json()
+                        pages = search_data.get("pages", [])
+                        if pages:
+                            first_page = pages[0]
+                            page_title = first_page.get("title")
+                            
+                            # Simple fuzzy matched check
+                            if title.lower()[:10] in page_title.lower() or page_title.lower()[:10] in title.lower():
+                                summary_res = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(page_title)}"
+                                async with session.get(summary_res, timeout=5) as wiki_response:
                                     if wiki_response.status == 200:
                                         wiki_data = await wiki_response.json()
                                         return wiki_data.get("extract")
-        except Exception as e:
-            # logging.debug(f"Error fetching {url}: {e}")
-            pass
+            except Exception:
+                pass
+                
     return None
 
-async def augment_dataframe(df):
-    logging.info("Starting Wikipedia augmentation...")
-    semaphore = asyncio.Semaphore(10)
-    
-    # Determine the wikidata column name, it's usually "Wikidata URL"
-    wiki_col = "Wikidata URL" if "Wikidata URL" in df.columns else None
-    
-    if not wiki_col:
-        logging.warning("No 'Wikidata URL' column found, skipping augmentation.")
-        return df
 
-    urls = df[wiki_col].tolist()
+async def augment_dataframe(df):
+    logging.info("Starting Wikipedia augmentation (URL parsing + programmatic fallback search)...")
+    semaphore = asyncio.Semaphore(15)
+    
+    rows = df.to_dict('records')
+    results = []
     
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_wikidata_summary(session, url, semaphore) for url in urls]
-        results = await asyncio.gather(*tasks)
+        chunk_size = 5000
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i:i+chunk_size]
+            tasks = [fetch_wikipedia_extract(session, row, semaphore) for row in chunk]
+            res = await asyncio.gather(*tasks)
+            results.extend(res)
+            logging.info(f"Augmented {min(i+chunk_size, len(rows))} / {len(rows)} records...")
 
     df['Wikipedia Extract'] = results
     
