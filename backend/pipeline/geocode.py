@@ -12,21 +12,15 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 DATA_DIR = Path("data")
-INPUT_PATH = DATA_DIR / "met_cleaned.parquet"
-OUTPUT_PATH = DATA_DIR / "met_geocoded.parquet"
+INPUT_PATH = DATA_DIR / "aic_cleaned.parquet"
+OUTPUT_PATH = DATA_DIR / "aic_geocoded.parquet"
 
 def get_location_string(row):
-    parts = []
-    if pd.notna(row.get('City')):
-        parts.append(str(row['City']))
-    if pd.notna(row.get('State')):
-        parts.append(str(row['State']))
-    if pd.notna(row.get('Country')):
-        parts.append(str(row['Country']))
-    elif pd.notna(row.get('Geography')):
-        parts.append(str(row['Geography']))
-        
-    return ", ".join(parts) if parts else ""
+    # AIC uses 'Country' (mapped from place_of_origin)
+    loc = row.get('Country')
+    if pd.notna(loc) and str(loc).lower() not in ('nan', 'none', ''):
+        return str(loc)
+    return ""
 
 def geocode_unique_locations(unique_locations):
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY")

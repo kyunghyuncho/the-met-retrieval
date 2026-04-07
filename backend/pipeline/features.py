@@ -14,7 +14,7 @@ from safetensors.numpy import save_file
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 DATA_DIR = Path("data")
-INPUT_PATH = DATA_DIR / "met_geocoded.parquet"
+INPUT_PATH = DATA_DIR / "aic_geocoded.parquet"
 OUTPUT_METADATA_PATH = DATA_DIR / "metadata_index.parquet"
 OUTPUT_IMAGES_PATH = DATA_DIR / "images_unprojected.pt"
 OUTPUT_TEXTS_PATH = DATA_DIR / "text_unprojected.pt"

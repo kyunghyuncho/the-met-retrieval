@@ -1,6 +1,6 @@
 # Cross-Modal Antiquities Retrieval System
 
-This repository contains a pedagogical implementation of a cross-modal retrieval system utilizing PyTorch, FastAPI, and a React frontend. The application demonstrates asynchronous data ingestion, contrastive representation learning, and high-performance vector search on the Metropolitan Museum of Art Open Access dataset.
+This repository contains a pedagogical implementation of a cross-modal retrieval system utilizing PyTorch, FastAPI, and a React frontend. The application demonstrates asynchronous data ingestion, contrastive representation learning, and high-performance vector search on the **Art Institute of Chicago (AIC) Open Access** dataset.
 
 ## Architecture Highlights
 
@@ -30,7 +30,7 @@ npm run dev
 
 ## Running the Data Engineering Pipeline
 
-To establish the backend vector representations, execute the offline data pipeline. Note that querying Wikimedia extracts and Nominatim for the entire catalog takes considerable elapsed time.
+To establish the backend vector representations, execute the offline data pipeline. The AIC metadata is fetched via their paginated public API (~8 min), geocoding resolves `place_of_origin` strings, and feature extraction encodes images and text.
 
 ```bash
 # Execute sequentially from the project root
