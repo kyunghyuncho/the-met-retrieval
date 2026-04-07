@@ -1,13 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer } from '@deck.gl/layers';
+import { TileLayer } from '@deck.gl/geo-layers';
+import { BitmapLayer } from '@deck.gl/layers';
 import { MapPin } from 'lucide-react';
 
-// Using a dark base map
+// Using a professional dark base map style via OSM
 const INITIAL_VIEW_STATE = {
-  longitude: 0,
-  latitude: 20,
-  zoom: 1.5,
+  longitude: 15,
+  latitude: 35,
+  zoom: 1.8,
   pitch: 0,
   bearing: 0
 };
@@ -17,7 +19,7 @@ export default function MapView() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/metadata/locations')
+    fetch('http://127.0.0.1:8000/api/metadata/locations')
       .then(res => res.json())
       .then(json => {
         setData(json);
@@ -30,6 +32,28 @@ export default function MapView() {
   }, []);
 
   const layers = useMemo(() => [
+    // Add an OpenStreetMap basemap layer
+    new TileLayer({
+      id: 'tile-layer',
+      data: 'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      minZoom: 0,
+      maxZoom: 19,
+      tileSize: 256,
+      renderSubLayers: (props: any) => {
+        const {
+          bbox: { west, south, east, north }
+        } = props.tile;
+
+        return new BitmapLayer(props, {
+          image: props.data,
+          bounds: [west, south, east, north]
+        });
+      },
+      // Desaturate the map for a more premium dark dashboard look
+      desaturate: 0.8,
+      tintColor: [50, 60, 80],
+    }),
+    
     new ScatterplotLayer({
       id: 'scatterplot-layer',
       data,
@@ -38,19 +62,14 @@ export default function MapView() {
       stroked: false,
       filled: true,
       radiusScale: 1,
-      radiusMinPixels: 2,
-      radiusMaxPixels: 10,
+      radiusMinPixels: 3,
+      radiusMaxPixels: 12,
       lineWidthMinPixels: 1,
       getPosition: (d: any) => [d.longitude, d.latitude],
-      getFillColor: () => {
-        // Simplified mapping for aesthetics. E.g. randomish distribution or based on age.
-        // A full implementation would parse d.age string properly.
-        return [45, 212, 191, 150]; // Teal 400
-      },
+      getFillColor: () => [45, 212, 191, 150], // Teal 400
       onClick: (info: any) => {
         if (info.object) {
           console.log('Clicked artifact:', info.object.id);
-          // In a full implementation, slide in a side-panel.
         }
       }
     })
