@@ -99,7 +99,9 @@ def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue:
         max_epochs=config.max_epochs,
         callbacks=[telemetry],
         enable_checkpointing=False,
-        logger=False
+        logger=False,
+        enable_progress_bar=False,
+        enable_model_summary=False
     )
     
     active_sessions[session_id]['trainer'] = trainer
@@ -164,7 +166,6 @@ async def telemetry_websocket(websocket: WebSocket, session_id: str):
         await websocket.send_text('{"type": "status", "status": "socket_connected"}')
         while True:
             msg = await queue.get()
-            logging.info(f"WebSocket sending: {msg}")
             await websocket.send_text(msg)
             if "status" in msg and "completed" in msg:
                 break
