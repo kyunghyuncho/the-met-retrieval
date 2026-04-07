@@ -55,8 +55,9 @@ class MetContrastiveModel(pl.LightningModule):
         loss_t = F.cross_entropy(logits_per_text, labels)
         loss = (loss_i + loss_t) / 2
         
-        # Calculate R@5 (dummy/approximate metric for demonstration inside batch)
-        _, top_indices = logits_per_image.topk(5, dim=1)
+        # Calculate R@K dynamically based on available batch size
+        k = min(5, logits_per_image.shape[1])
+        _, top_indices = logits_per_image.topk(k, dim=1)
         correct = (top_indices == labels.view(-1, 1)).any(dim=1)
         r_at_5 = correct.float().mean()
         
