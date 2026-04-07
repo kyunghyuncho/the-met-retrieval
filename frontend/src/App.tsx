@@ -2,7 +2,8 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react
 import Train from './pages/Train';
 import MapView from './pages/Map';
 import Search from './pages/Search';
-import { Database, Map as MapIcon, Search as SearchIcon } from 'lucide-react';
+import About from './pages/About';
+import { Database, Map as MapIcon, Search as SearchIcon, Info } from 'lucide-react';
 
 function Sidebar() {
   const location = useLocation();
@@ -29,6 +30,10 @@ function Sidebar() {
           <SearchIcon size={20} className="text-purple-400"/>
           <span>Retrieval</span>
         </Link>
+        <Link to="/about" className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${isActive('/about') ? 'bg-slate-800 text-white' : 'hover:bg-slate-800 text-slate-400'}`}>
+          <Info size={20} className="text-slate-400"/>
+          <span>Data Source</span>
+        </Link>
       </nav>
     </aside>
   );
@@ -44,6 +49,7 @@ function App() {
             <Route path="/train" element={<Train />} />
             <Route path="/map" element={<MapView />} />
             <Route path="/search" element={<Search />} />
+            <Route path="/about" element={<About />} />
             <Route path="/" element={<Search />} />
           </Routes>
         </main>
