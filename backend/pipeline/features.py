@@ -232,6 +232,19 @@ def main(batch_size: int = 64, num_workers: int = 4) -> None:
     )
     torch.save(text_tensor_full, OUTPUT_TEXTS_PATH)
 
+    # Stamp has_image into the metadata so retrieval layers can mask
+    # image-less items without re-reading the manifest at query time.
+    has_image_series = (
+        manifest.set_index("df_index")["local_path"].notna().reindex(range(len(df))).fillna(False)
+    )
+    df = df.copy()
+    df["has_image"] = has_image_series.values
+
+    logging.info(
+        "has_image: %d / %d items have a downloaded image.",
+        df["has_image"].sum(),
+        len(df),
+    )
     logging.info("Saving metadata index → %s", OUTPUT_METADATA_PATH)
     df.to_parquet(OUTPUT_METADATA_PATH, index=False)
 

@@ -68,31 +68,70 @@ class MetContrastiveModel(pl.LightningModule):
 
 
 class MetDataModule(pl.LightningDataModule):
-    def __init__(self, images_tensor, texts_tensor, batch_size=256):
+    """Lightning DataModule for the Met contrastive retrieval model.
+
+    Parameters
+    ----------
+    images_tensor:
+        Shape ``[N, d_image]`` — image embeddings for **all** items.
+        Zero tensors are present for items without downloaded images.
+    texts_tensor:
+        Shape ``[N, d_text]`` — text embeddings for **all** items.
+    has_image_mask:
+        Boolean 1-D tensor of length N.  Only rows where this is ``True``
+        are used during contrastive training, since InfoNCE requires genuine
+        image-text pairs.
+    batch_size:
+        Mini-batch size for training and validation.
+    """
+
+    def __init__(
+        self,
+        images_tensor: torch.Tensor,
+        texts_tensor: torch.Tensor,
+        has_image_mask: torch.Tensor,
+        batch_size: int = 256,
+    ) -> None:
         super().__init__()
         self.images_tensor = images_tensor
         self.texts_tensor = texts_tensor
+        self.has_image_mask = has_image_mask
         self.batch_size = batch_size
-        
+
     def setup(self, stage=None):
-        dataset_size = len(self.images_tensor)
-        train_size = int(0.8 * dataset_size)
-        val_size = int(0.1 * dataset_size)
-        test_size = dataset_size - train_size - val_size
-        
-        dataset = TensorDataset(self.images_tensor, self.texts_tensor)
-        self.train_dataset, self.val_dataset, self.test_dataset = torch.utils.data.random_split(
-            dataset, [train_size, val_size, test_size], generator=torch.Generator().manual_seed(42)
+        # Restrict training pairs to items that have a real image.
+        image_indices = self.has_image_mask.nonzero(as_tuple=False).squeeze(1)
+        paired_images = self.images_tensor[image_indices]
+        paired_texts = self.texts_tensor[image_indices]
+
+        n = len(paired_images)
+        train_size = int(0.8 * n)
+        val_size = int(0.1 * n)
+        test_size = n - train_size - val_size
+
+        dataset = TensorDataset(paired_images, paired_texts)
+        self.train_dataset, self.val_dataset, self.test_dataset = (
+            torch.utils.data.random_split(
+                dataset,
+                [train_size, val_size, test_size],
+                generator=torch.Generator().manual_seed(42),
+            )
         )
-        
+
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
-        
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            drop_last=True,
+        )
+
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size)
-        
+
     def test_dataloader(self):
         return DataLoader(self.test_dataset, batch_size=self.batch_size)
+
 
 
 class TelemetryCallback(pl.Callback):

@@ -23,24 +23,52 @@ class TrainingConfig(BaseModel):
     temperature_init: float = 0.07
 
 def build_faiss_indices(app_state, model, device):
+    """Build two FAISS indices after training.
+
+    * ``index_texts``  — all N items indexed by their projected text embedding.
+      Used for image→description and text→description queries.
+    * ``index_images`` — only the M ≤ N items that have a real downloaded image,
+      indexed by their projected image embedding.  A parallel array
+      ``image_row_ids`` maps each FAISS position back to the global row index in
+      ``metadata_records`` so search results resolve correctly.
+      Used for image→image and text→image queries.
+    """
+    has_image_mask = app_state.has_image_mask  # bool tensor [N]
+    image_row_ids = has_image_mask.nonzero(as_tuple=False).squeeze(1)  # [M]
+
     images_tensor = app_state.images_tensor.to(device)
     texts_tensor = app_state.texts_tensor.to(device)
-    
+
     with torch.no_grad():
-        z_image_proj = torch.nn.functional.normalize(model.W_image(images_tensor), p=2, dim=1).cpu().numpy()
-        z_text_proj = torch.nn.functional.normalize(model.W_text(texts_tensor), p=2, dim=1).cpu().numpy()
-        
-    d = z_image_proj.shape[1]
-    
-    index_images = faiss.IndexFlatIP(d)
-    index_images.add(z_image_proj)
-    
+        # All-N text projections.
+        z_text_proj = (
+            torch.nn.functional.normalize(model.W_text(texts_tensor), p=2, dim=1)
+            .cpu()
+            .numpy()
+        )
+        # Image-only (M rows) projections.
+        z_image_proj = (
+            torch.nn.functional.normalize(
+                model.W_image(images_tensor[image_row_ids]), p=2, dim=1
+            )
+            .cpu()
+            .numpy()
+        )
+
+    d = z_text_proj.shape[1]
+
+    # index_texts: all N rows, position i → global row i.
     index_texts = faiss.IndexFlatIP(d)
     index_texts.add(z_text_proj)
-    
-    app_state.index_images = index_images
+
+    # index_images: M rows; positions are mapped via image_row_ids.
+    index_images = faiss.IndexFlatIP(d)
+    index_images.add(z_image_proj)
+
     app_state.index_texts = index_texts
-    app_state.model = model.cpu() # ensure the model state is kept on CPU for inference routing usually or whatever inference uses
+    app_state.index_images = index_images
+    app_state.image_row_ids = image_row_ids.tolist()  # list[int], len M
+    app_state.model = model.cpu()
 
 def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue: asyncio.Queue):
     dev_mode = int(os.environ.get("DEV_MODE", "1"))
@@ -55,9 +83,10 @@ def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue:
     )
     
     datamodule = MetDataModule(
-        app_state.images_tensor, 
-        app_state.texts_tensor, 
-        batch_size=config.batch_size
+        app_state.images_tensor,
+        app_state.texts_tensor,
+        has_image_mask=app_state.has_image_mask,
+        batch_size=config.batch_size,
     )
     
     telemetry = TelemetryCallback(queue)

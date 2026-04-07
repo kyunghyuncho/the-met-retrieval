@@ -29,9 +29,24 @@ async def lifespan(app: FastAPI):
         logging.info("Loading metadata index...")
         app.state.metadata_df = pd.read_parquet(metadata_path)
         app.state.metadata_records = app.state.metadata_df.to_dict('records')
+        # Build a boolean mask aligned with the metadata rows.
+        if "has_image" in app.state.metadata_df.columns:
+            app.state.has_image_mask = torch.tensor(
+                app.state.metadata_df["has_image"].values, dtype=torch.bool
+            )
+        else:
+            # Fallback for older metadata files: assume all items have images.
+            logging.warning(
+                "'has_image' column missing from metadata; assuming all items "
+                "have images.  Re-run features.py to populate this column."
+            )
+            app.state.has_image_mask = torch.ones(
+                len(app.state.metadata_df), dtype=torch.bool
+            )
     else:
         logging.warning("Metadata index not found.")
         app.state.metadata_records = []
+        app.state.has_image_mask = torch.zeros(0, dtype=torch.bool)
         
     if images_path.exists():
         logging.info("Loading unprojected images tensor...")
@@ -47,6 +62,7 @@ async def lifespan(app: FastAPI):
         
     app.state.index_images = None
     app.state.index_texts = None
+    app.state.image_row_ids = []   # list[int] mapping FAISS pos → global row
     app.state.model = None
     
     # Load inference models safely
@@ -82,11 +98,12 @@ class TextSearchQuery(BaseModel):
 
 @app.post("/api/search/text")
 async def search_text(query: TextSearchQuery):
-    if app.state.index_images is None or app.state.model is None:
+    """Text-query → descriptions (all N items) and/or images (image-having items)."""
+    if app.state.index_texts is None or app.state.model is None:
         raise HTTPException(status_code=400, detail="Model not trained or indices not built yet.")
-        
+
     text_prefix = "search_query: " + query.query
-    
+
     inputs = app.state.tokenizer(text_prefix, return_tensors="pt").to(app.state.device)
     with torch.no_grad():
         outputs = app.state.text_model(**inputs)
@@ -94,52 +111,57 @@ async def search_text(query: TextSearchQuery):
         attention_mask = inputs['attention_mask']
         input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         text_features = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-        
-        # Apply projection
+
         device_model = app.state.model.to(app.state.device)
         z_text = torch.nn.functional.normalize(device_model.W_text(text_features), p=2, dim=1).cpu().numpy()
-        
-    distances, indices = app.state.index_images.search(z_text, query.k)
-    
+
+    # index_texts covers all N rows; FAISS position == global metadata row index.
+    distances, indices = app.state.index_texts.search(z_text, query.k)
+
     results = []
     for idx_tuple, dist_tuple in zip(indices, distances):
         for idx, dist in zip(idx_tuple, dist_tuple):
             if idx != -1 and idx < len(app.state.metadata_records):
                 record = app.state.metadata_records[idx].copy()
                 record['similarity'] = float(dist)
-                # Map Inner-product roughly to percentage. Assuming L2 normalized, IP is cosine sim [-1, 1]
                 record['similarity_percentage'] = round(((float(dist) + 1.0) / 2.0) * 100, 2)
                 results.append(record)
-                
+
     return results
 
 @app.post("/api/search/image")
 async def search_image(file: UploadFile = File(...), k: int = Form(20)):
-    if app.state.index_texts is None or app.state.model is None:
+    """Image-query → descriptions (all N, via text index) and images (image-only)."""
+    if app.state.index_images is None or app.state.model is None:
         raise HTTPException(status_code=400, detail="Model not trained or indices not built yet.")
-        
+
     contents = await file.read()
     image = Image.open(io.BytesIO(contents)).convert("RGB")
-    
+
     inputs = app.state.image_processor(images=image, return_tensors="pt").to(app.state.device)
     with torch.no_grad():
         outputs = app.state.image_model(**inputs)
         img_features = outputs.last_hidden_state[:, 0, :]
-        
+
         device_model = app.state.model.to(app.state.device)
         z_image = torch.nn.functional.normalize(device_model.W_image(img_features), p=2, dim=1).cpu().numpy()
-        
-    distances, indices = app.state.index_texts.search(z_image, k)
-    
+
+    # index_images covers only M image-having rows.
+    # image_row_ids[faiss_pos] → global metadata row index.
+    distances, indices = app.state.index_images.search(z_image, k)
+    row_ids = app.state.image_row_ids
+
     results = []
     for idx_tuple, dist_tuple in zip(indices, distances):
-        for idx, dist in zip(idx_tuple, dist_tuple):
-            if idx != -1 and idx < len(app.state.metadata_records):
-                record = app.state.metadata_records[idx].copy()
-                record['similarity'] = float(dist)
-                record['similarity_percentage'] = round(((float(dist) + 1.0) / 2.0) * 100, 2)
-                results.append(record)
-                
+        for faiss_pos, dist in zip(idx_tuple, dist_tuple):
+            if faiss_pos != -1 and faiss_pos < len(row_ids):
+                global_idx = row_ids[faiss_pos]
+                if global_idx < len(app.state.metadata_records):
+                    record = app.state.metadata_records[global_idx].copy()
+                    record['similarity'] = float(dist)
+                    record['similarity_percentage'] = round(((float(dist) + 1.0) / 2.0) * 100, 2)
+                    results.append(record)
+
     return results
 
 @app.get("/api/metadata/locations")
