@@ -35,7 +35,7 @@ export default function MapView() {
     // Add an OpenStreetMap basemap layer
     new TileLayer({
       id: 'tile-layer',
-      data: 'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      data: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       minZoom: 0,
       maxZoom: 19,
       tileSize: 256,
@@ -49,9 +49,6 @@ export default function MapView() {
           bounds: [west, south, east, north]
         });
       },
-      // Desaturate the map for a more premium dark dashboard look
-      desaturate: 0.8,
-      tintColor: [50, 60, 80],
     }),
     
     new ScatterplotLayer({
