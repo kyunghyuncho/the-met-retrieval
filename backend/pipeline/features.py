@@ -1,122 +1,258 @@
-import torch
+"""features.py – Stage 3b of the Met Retrieval pipeline.
+
+Extracts DINOv2 image embeddings and Nomic text embeddings from pre-downloaded
+local images.  Assumes ``download_images.py`` has already populated
+``data/images/`` and written ``data/images_manifest.parquet``.
+
+Because all I/O is local disk access, the DataLoader can safely use multiple
+workers (``--num-workers``) so the GPU stays saturated between batches.
+
+Pipeline order
+--------------
+ingest.py → geocode.py → download_images.py → features.py
+
+Usage
+-----
+    uv run backend/pipeline/features.py [--batch-size N] [--num-workers N]
+"""
+
+import argparse
+import logging
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
-from pathlib import Path
+import torch
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel, AutoTokenizer
-import logging
-from torch.utils.data import Dataset, DataLoader
-import requests
-import io
-from safetensors.numpy import save_file
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 
 DATA_DIR = Path("data")
-INPUT_PATH = DATA_DIR / "aic_geocoded.parquet"
+INPUT_GEOCODED_PATH = DATA_DIR / "aic_geocoded.parquet"
+INPUT_MANIFEST_PATH = DATA_DIR / "images_manifest.parquet"
 OUTPUT_METADATA_PATH = DATA_DIR / "metadata_index.parquet"
 OUTPUT_IMAGES_PATH = DATA_DIR / "images_unprojected.pt"
 OUTPUT_TEXTS_PATH = DATA_DIR / "text_unprojected.pt"
 
-class MetArtifactDataset(Dataset):
-    def __init__(self, df):
-        self.df = df
-        self.transform = transforms.Compose([
+
+class LocalImageArtifactDataset(Dataset):
+    """Dataset that loads pre-downloaded JPEG images from disk.
+
+    Parameters
+    ----------
+    df:
+        The geocoded artifact DataFrame.
+    manifest:
+        DataFrame with columns ``df_index`` (int) and ``local_path``
+        (str | None) produced by ``download_images.py``.
+    """
+
+    _TRANSFORM = transforms.Compose(
+        [
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-        
-    def __len__(self):
-        return len(self.df)
-        
-    def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        image_url = row.get("Primary Image")
-        text = row.get("text_serialized")
-        
-        image_tensor = torch.zeros((3, 224, 224))
-        
-        if pd.notna(image_url) and str(image_url).startswith("http"):
-            try:
-                response = requests.get(image_url, timeout=5)
-                if response.status_code == 200:
-                    image = Image.open(io.BytesIO(response.content)).convert("RGB")
-                    image_tensor = self.transform(image)
-            except Exception as e:
-                pass # Return zero tensor on failure
-        
-        return image_tensor, "search_document: " + str(text)
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ]
+    )
 
-def main():
-    if not INPUT_PATH.exists():
-        logging.error(f"Input file {INPUT_PATH} not found. Run geocode.py first.")
-        return
-        
-    device = torch.device('mps' if torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu'))
-    logging.info(f"Using device: {device}")
-    
-    df = pd.read_parquet(INPUT_PATH)
-    
-    # Initialize models
-    logging.info("Loading dinov2-small for images...")
-    image_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-small")
+    def __init__(self, df: pd.DataFrame, manifest: pd.DataFrame) -> None:
+        self.df = df.reset_index(drop=True)
+        # Build a fast positional-index → local_path lookup.
+        self._path_map: dict[int, str | None] = dict(
+            zip(manifest["df_index"], manifest["local_path"])
+        )
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, str]:
+        row = self.df.iloc[idx]
+        local_path = self._path_map.get(idx)
+        text: str = "search_document: " + str(row.get("text_serialized", ""))
+
+        # Zero tensor is the safe fallback for missing / corrupt images.
+        image_tensor = torch.zeros((3, 224, 224))
+
+        if local_path is not None:
+            path = Path(local_path)
+            if path.exists():
+                try:
+                    image = Image.open(path).convert("RGB")
+                    image_tensor = self._TRANSFORM(image)
+                except Exception as exc:  # noqa: BLE001
+                    logging.debug("Could not load image %s: %s", path, exc)
+
+        return image_tensor, text
+
+
+def _mean_pool(
+    token_embeddings: torch.Tensor,
+    attention_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Attention-mask-weighted mean pooling over the token dimension."""
+    mask_expanded = (
+        attention_mask.unsqueeze(-1)
+        .expand(token_embeddings.size())
+        .float()
+    )
+    return torch.sum(token_embeddings * mask_expanded, dim=1) / torch.clamp(
+        mask_expanded.sum(dim=1), min=1e-9
+    )
+
+
+def main(batch_size: int = 64, num_workers: int = 4) -> None:
+    # ------------------------------------------------------------------
+    # Validate inputs
+    # ------------------------------------------------------------------
+    for path in (INPUT_GEOCODED_PATH, INPUT_MANIFEST_PATH):
+        if not path.exists():
+            logging.error(
+                "Required input %s not found.  "
+                "Run the earlier pipeline stages first.",
+                path,
+            )
+            return
+
+    # ------------------------------------------------------------------
+    # Device selection
+    # ------------------------------------------------------------------
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    logging.info("Using device: %s", device)
+
+    # ------------------------------------------------------------------
+    # Load data
+    # ------------------------------------------------------------------
+    df = pd.read_parquet(INPUT_GEOCODED_PATH)
+    manifest = pd.read_parquet(INPUT_MANIFEST_PATH)
+    logging.info(
+        "Loaded %d artifacts; manifest covers %d entries (%d with images).",
+        len(df),
+        len(manifest),
+        manifest["local_path"].notna().sum(),
+    )
+
+    # ------------------------------------------------------------------
+    # Load models
+    # ------------------------------------------------------------------
+    logging.info("Loading DINOv2-small for image embeddings…")
+    image_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-small")  # noqa: F841
     image_model = AutoModel.from_pretrained("facebook/dinov2-small").to(device)
-    
-    logging.info("Loading nomic-embed-text-v1.5 for text...")
+
+    logging.info("Loading nomic-embed-text-v1.5 for text embeddings…")
     tokenizer = AutoTokenizer.from_pretrained("nomic-ai/nomic-embed-text-v1.5")
-    # nomic requires trust_remote_code=True
-    text_model = AutoModel.from_pretrained("nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True).to(device)
-    
-    dataset = MetArtifactDataset(df)
-    dataloader = DataLoader(dataset, batch_size=64, num_workers=0, shuffle=False)
-    
-    all_image_features = []
-    all_text_features = []
-    
-    logging.info(f"Starting feature extraction for {len(dataset)} items...")
-    
+    text_model = AutoModel.from_pretrained(
+        "nomic-ai/nomic-embed-text-v1.5", trust_remote_code=True
+    ).to(device)
+
+    # ------------------------------------------------------------------
+    # Build DataLoader
+    # ------------------------------------------------------------------
+    dataset = LocalImageArtifactDataset(df, manifest)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        shuffle=False,
+        pin_memory=(device.type == "cuda"),
+        persistent_workers=(num_workers > 0),
+    )
+    logging.info(
+        "DataLoader: %d items, batch_size=%d, num_workers=%d.",
+        len(dataset),
+        batch_size,
+        num_workers,
+    )
+
+    # ------------------------------------------------------------------
+    # Feature extraction (GPU-only inner loop)
+    # ------------------------------------------------------------------
+    all_image_features: list[torch.Tensor] = []
+    all_text_features: list[torch.Tensor] = []
+
     image_model.eval()
     text_model.eval()
-    
+
+    n_batches = len(dataloader)
+    logging.info("Starting feature extraction over %d batches…", n_batches)
+
     with torch.no_grad():
         for i, (images, texts) in enumerate(dataloader):
-            images = images.to(device)
-            
-            # Extract Image Features
-            img_outputs = image_model(pixel_values=images)
-            img_features = img_outputs.last_hidden_state[:, 0, :] # CLS token
-            all_image_features.append(img_features.cpu())
-            
-            # Extract Text Features
-            inputs = tokenizer(list(texts), padding=True, truncation=True, max_length=512, return_tensors="pt").to(device)
-            text_outputs = text_model(**inputs)
-            # mean pooling or cls pooling depending on model, nomic usually uses mean pooling over active tokens
-            attention_mask = inputs['attention_mask']
-            token_embeddings = text_outputs.last_hidden_state
-            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-            text_features = torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-            
-            # Layer normalization according to some nomic recommendations, but we'll stick to raw features
-            # L2 normalization comes later in the projection layer.
-            all_text_features.append(text_features.cpu())
-            
-            if (i+1) % 10 == 0:
-                logging.info(f"Processed batch {i+1} / {len(dataloader)}")
-                
+            images = images.to(device, non_blocking=True)
+
+            # Image: CLS token of DINOv2.
+            img_out = image_model(pixel_values=images)
+            img_feat = img_out.last_hidden_state[:, 0, :]
+            all_image_features.append(img_feat.cpu())
+
+            # Text: attention-masked mean pooling over Nomic embeddings.
+            enc = tokenizer(
+                list(texts),
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt",
+            ).to(device)
+            txt_out = text_model(**enc)
+            txt_feat = _mean_pool(
+                txt_out.last_hidden_state, enc["attention_mask"]
+            )
+            all_text_features.append(txt_feat.cpu())
+
+            if (i + 1) % 10 == 0 or (i + 1) == n_batches:
+                logging.info("Processed batch %d / %d.", i + 1, n_batches)
+
+    # ------------------------------------------------------------------
+    # Save outputs
+    # ------------------------------------------------------------------
     image_tensor_full = torch.cat(all_image_features, dim=0)
     text_tensor_full = torch.cat(all_text_features, dim=0)
-    
-    logging.info(f"Saving images tensor: {image_tensor_full.shape} to {OUTPUT_IMAGES_PATH}")
+
+    logging.info(
+        "Saving image features %s → %s", image_tensor_full.shape, OUTPUT_IMAGES_PATH
+    )
     torch.save(image_tensor_full, OUTPUT_IMAGES_PATH)
-    
-    logging.info(f"Saving texts tensor: {text_tensor_full.shape} to {OUTPUT_TEXTS_PATH}")
+
+    logging.info(
+        "Saving text features %s → %s", text_tensor_full.shape, OUTPUT_TEXTS_PATH
+    )
     torch.save(text_tensor_full, OUTPUT_TEXTS_PATH)
-    
-    logging.info(f"Saving final metadata index to {OUTPUT_METADATA_PATH}")
+
+    logging.info("Saving metadata index → %s", OUTPUT_METADATA_PATH)
     df.to_parquet(OUTPUT_METADATA_PATH, index=False)
 
+    logging.info("Feature extraction complete.")
+
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="Extract DINOv2 + Nomic embeddings from local image cache."
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Batch size for model forward passes (default: 64).",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=4,
+        help="DataLoader worker processes for parallel image loading (default: 4).",
+    )
+    args = parser.parse_args()
+    main(batch_size=args.batch_size, num_workers=args.num_workers)

@@ -30,14 +30,32 @@ npm run dev
 
 ## Running the Data Engineering Pipeline
 
-To establish the backend vector representations, execute the offline data pipeline. The AIC metadata is fetched via their paginated public API (~8 min), geocoding resolves `place_of_origin` strings, and feature extraction encodes images and text.
+The offline pipeline is split into four stages to maximize hardware utilisation.
+Image downloading is I/O-bound and runs on CPU; feature extraction is
+compute-bound and runs exclusively on GPU (or MPS on Apple Silicon).
 
 ```bash
-# Execute sequentially from the project root
-python -m backend.pipeline.ingest
-python -m backend.pipeline.geocode
-python -m backend.pipeline.features
+# Stage 1 – AIC metadata ingestion (~8 min, paginated REST API)
+uv run backend/pipeline/ingest.py
+
+# Stage 2 – Geocode place-of-origin strings
+uv run backend/pipeline/geocode.py
+
+# Stage 3a – Download images to local cache (CPU / bandwidth, run on any machine)
+#   --workers  parallel HTTP threads (default: 32)
+#   --timeout  per-request timeout in seconds (default: 15)
+uv run backend/pipeline/download_images.py --workers 32
+
+# Stage 3b – GPU feature extraction (reads from local cache, zero network I/O)
+#   --batch-size  model forward-pass batch size (default: 64)
+#   --num-workers DataLoader worker processes (default: 4)
+uv run backend/pipeline/features.py --batch-size 64 --num-workers 4
 ```
+
+Stages 3a and 3b can be run on different machines: copy `data/images/` and
+`data/images_manifest.parquet` to your GPU host before running stage 3b.
+The manifest records which images were successfully downloaded so the feature
+extractor can emit a safe zero-tensor fallback for any missing entries.
 
 ## Running the Server API
 
