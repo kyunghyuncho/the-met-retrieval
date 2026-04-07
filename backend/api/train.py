@@ -1,6 +1,7 @@
 import os
 import uuid
 import asyncio
+import logging
 from fastapi import APIRouter, BackgroundTasks, WebSocket, WebSocketDisconnect, Request, HTTPException
 from pydantic import BaseModel
 import lightning.pytorch as pl
@@ -149,19 +150,21 @@ async def abort_training(session_id: str):
 
 @router.websocket("/ws/telemetry/{session_id}")
 async def telemetry_websocket(websocket: WebSocket, session_id: str):
-    await websocket.accept()
-    logging.info(f"WebSocket: Telemetry client connected for session {session_id}")
-    
-    if session_id not in active_sessions:
-        await websocket.send_text('{"type": "error", "message": "Session not found"}')
-        await websocket.close()
-        return
-        
-    queue = active_sessions[session_id]['queue']
-    
     try:
+        await websocket.accept()
+        logging.info(f"WebSocket: Telemetry client connected for session {session_id}")
+        
+        if session_id not in active_sessions:
+            await websocket.send_text('{"type": "error", "message": "Session not found"}')
+            await websocket.close()
+            return
+            
+        queue = active_sessions[session_id]['queue']
+        
+        await websocket.send_text('{"type": "status", "status": "socket_connected"}')
         while True:
             msg = await queue.get()
+            logging.info(f"WebSocket sending: {msg}")
             await websocket.send_text(msg)
             if "status" in msg and "completed" in msg:
                 break
@@ -170,6 +173,9 @@ async def telemetry_websocket(websocket: WebSocket, session_id: str):
     except WebSocketDisconnect:
         logging.info(f"WebSocket: Telemetry client disconnected for session {session_id}")
     except Exception as e:
+        import traceback
+        with open("/tmp/ws_error.log", "w") as f:
+            f.write(traceback.format_exc())
         logging.error(f"WebSocket: Error in telemetry loop: {e}")
     finally:
         pass # Optional cleanup

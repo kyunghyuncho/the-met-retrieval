@@ -154,13 +154,10 @@ class TelemetryCallback(pl.Callback):
         
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         # We send telemetry every batch for smooth UI curves.
-        # Accessing 'outputs' directly is more reliable than 'callback_metrics' during this event.
-        if outputs is None:
-            return
-            
         try:
-            # Handle cases where outputs might be a dict or a plain tensor
-            train_loss = outputs['loss'] if isinstance(outputs, dict) else outputs
+            train_loss = trainer.callback_metrics.get('train_loss')
+            if train_loss is None: 
+                return
             
             msg = {
                 "type": "train_step",
