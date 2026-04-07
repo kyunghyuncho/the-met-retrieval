@@ -9,6 +9,7 @@ import faiss
 import numpy as np
 
 from backend.models.lit_model import MetContrastiveModel, MetDataModule, TelemetryCallback
+from backend.api.persistence import save_state
 
 router = APIRouter()
 
@@ -110,6 +111,9 @@ def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue:
         
     # Rebuild indices
     build_faiss_indices(app_state, model, 'cpu') # Use CPU for building generic indices or accelerator if memory permits
+    
+    # Persist to disk
+    save_state(app_state, model)
     
     if session_id in active_sessions:
         del active_sessions[session_id]

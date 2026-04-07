@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import lightning.pytorch as pl
 from torch.utils.data import TensorDataset, DataLoader
 import json
+import logging
 
 class MetContrastiveModel(pl.LightningModule):
     def __init__(self, d_image=384, d_text=768, d_joint=512, learning_rate=1e-4, temperature_init=0.07):
@@ -140,13 +141,15 @@ class TelemetryCallback(pl.Callback):
         self.queue = queue
         
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        # We send telemetry every batch for smooth UI curves, 
-        # but avoid printing to terminal to keep logs clean.
-        train_loss = trainer.callback_metrics.get('train_loss') or \
-                     trainer.callback_metrics.get('train_loss_step') or \
-                     trainer.callback_metrics.get('train_loss_epoch')
-        
-        if train_loss is not None:
+        # We send telemetry every batch for smooth UI curves.
+        # Accessing 'outputs' directly is more reliable than 'callback_metrics' during this event.
+        if outputs is None:
+            return
+            
+        try:
+            # Handle cases where outputs might be a dict or a plain tensor
+            train_loss = outputs['loss'] if isinstance(outputs, dict) else outputs
+            
             msg = {
                 "type": "train_step",
                 "epoch": trainer.current_epoch,
@@ -154,6 +157,9 @@ class TelemetryCallback(pl.Callback):
                 "train_loss": train_loss.item()
             }
             self.queue.put_nowait(json.dumps(msg))
+        except Exception as e:
+            # Silent fail to avoid crashing training if telemetry fails
+            pass
             
     def on_validation_epoch_end(self, trainer, pl_module):
         val_loss = trainer.callback_metrics.get('val_loss')

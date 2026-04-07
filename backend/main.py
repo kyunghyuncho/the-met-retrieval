@@ -1,3 +1,7 @@
+import os
+# Fix for OMP: Error #15 on macOS when using faiss + torch
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 from fastapi import FastAPI, Depends, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -10,6 +14,8 @@ from transformers import AutoImageProcessor, AutoModel, AutoTokenizer
 from PIL import Image
 import io
 
+from backend.models.lit_model import MetContrastiveModel
+from backend.api.persistence import load_state
 from backend.api.train import router as train_router
 
 logging.basicConfig(level=logging.INFO)
@@ -66,6 +72,9 @@ async def lifespan(app: FastAPI):
     app.state.index_texts = None
     app.state.image_row_ids = []   # list[int] mapping FAISS pos → global row
     app.state.model = None
+    
+    # Attempt to load persistent state early
+    load_state(app.state, MetContrastiveModel)
     
     # Load inference models safely
     device = torch.device('mps' if torch.backends.mps.is_available() else ('cuda' if torch.cuda.is_available() else 'cpu'))
