@@ -4,6 +4,7 @@ import { ScatterplotLayer } from '@deck.gl/layers';
 import { TileLayer } from '@deck.gl/geo-layers';
 import { BitmapLayer } from '@deck.gl/layers';
 import { MapPin } from 'lucide-react';
+import { useAppStore } from '../store';
 
 // Using a professional dark base map style via OSM
 const INITIAL_VIEW_STATE = {
@@ -17,6 +18,7 @@ const INITIAL_VIEW_STATE = {
 export default function MapView() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const { setSelectedArtifactId } = useAppStore();
 
   useEffect(() => {
     fetch('http://127.0.0.1:8000/api/metadata/locations')
@@ -39,16 +41,17 @@ export default function MapView() {
       minZoom: 0,
       maxZoom: 19,
       tileSize: 256,
-      renderSubLayers: (props: any) => {
+      renderSubLayers: (props) => {
         const {
           bbox: { west, south, east, north }
-        } = props.tile;
+        } = props.tile as any;
 
-        return new BitmapLayer(props, {
+        return new BitmapLayer(props as any, {
+          data: undefined,
           image: props.data,
           bounds: [west, south, east, north]
-        });
-      },
+        } as any);
+      }
     }),
     
     new ScatterplotLayer({
@@ -66,11 +69,11 @@ export default function MapView() {
       getFillColor: () => [45, 212, 191, 150], // Teal 400
       onClick: (info: any) => {
         if (info.object) {
-          console.log('Clicked artifact:', info.object.id);
+          setSelectedArtifactId(info.object.id);
         }
       }
     })
-  ], [data]);
+  ], [data, setSelectedArtifactId]);
 
   return (
     <div className="h-full w-full relative flex flex-col items-center justify-center">

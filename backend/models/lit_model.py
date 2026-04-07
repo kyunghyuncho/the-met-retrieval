@@ -136,9 +136,20 @@ class MetDataModule(pl.LightningDataModule):
 
 
 class TelemetryCallback(pl.Callback):
-    def __init__(self, queue):
+    def __init__(self, queue, loop=None):
         super().__init__()
         self.queue = queue
+        self.loop = loop
+        
+    def _send(self, msg):
+        try:
+            msg_str = json.dumps(msg)
+            if self.loop and hasattr(self.loop, 'call_soon_threadsafe'):
+                self.loop.call_soon_threadsafe(self.queue.put_nowait, msg_str)
+            else:
+                self.queue.put_nowait(msg_str)
+        except Exception:
+            pass
         
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         # We send telemetry every batch for smooth UI curves.
@@ -156,7 +167,8 @@ class TelemetryCallback(pl.Callback):
                 "batch": batch_idx,
                 "train_loss": train_loss.item()
             }
-            self.queue.put_nowait(json.dumps(msg))
+            self._send(msg)
+
         except Exception as e:
             # Silent fail to avoid crashing training if telemetry fails
             pass
@@ -171,7 +183,7 @@ class TelemetryCallback(pl.Callback):
             "val_loss": val_loss.item() if val_loss is not None else None,
             "val_r_at_5": val_r_at_5.item() if val_r_at_5 is not None else None
         }
-        self.queue.put_nowait(json.dumps(msg))
+        self._send(msg)
         # Keep a single logging event per epoch
         logging.info(f"Telemetry: Epoch {trainer.current_epoch} validation complete.")
 

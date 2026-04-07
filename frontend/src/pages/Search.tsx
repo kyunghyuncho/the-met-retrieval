@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Search as SearchIcon, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { useAppStore } from '../store';
 
 export default function Search() {
+  const { setSelectedArtifactId } = useAppStore();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -146,7 +148,11 @@ export default function Search() {
       {/* Results Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">
         {results.map((item, idx) => (
-          <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-teal-500/50 transition-colors group">
+          <div 
+            key={idx} 
+            onClick={() => setSelectedArtifactId(item['Object ID'])}
+            className="cursor-pointer bg-slate-900 border border-slate-800 rounded-xl overflow-hidden hover:border-teal-500/50 transition-colors group"
+          >
             <div className="h-48 w-full relative bg-slate-800 overflow-hidden">
               {item['Primary Image'] ? (
                 <img 

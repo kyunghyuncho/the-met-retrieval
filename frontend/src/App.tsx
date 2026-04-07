@@ -3,6 +3,7 @@ import Train from './pages/Train';
 import MapView from './pages/Map';
 import Search from './pages/Search';
 import About from './pages/About';
+import ArtifactCard from './components/ArtifactCard';
 import { Database, Map as MapIcon, Search as SearchIcon, Info } from 'lucide-react';
 
 function Sidebar() {
@@ -52,6 +53,7 @@ function App() {
             <Route path="/about" element={<About />} />
             <Route path="/" element={<Search />} />
           </Routes>
+          <ArtifactCard />
         </main>
       </div>
     </Router>

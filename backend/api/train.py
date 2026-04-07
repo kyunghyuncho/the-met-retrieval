@@ -71,7 +71,7 @@ def build_faiss_indices(app_state, model, device):
     app_state.image_row_ids = image_row_ids.tolist()  # list[int], len M
     app_state.model = model.cpu()
 
-def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue: asyncio.Queue):
+def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
     dev_mode = int(os.environ.get("DEV_MODE", "1"))
     accelerator = "mps" if dev_mode == 1 and torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
     
@@ -90,7 +90,7 @@ def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue:
         batch_size=config.batch_size,
     )
     
-    telemetry = TelemetryCallback(queue)
+    telemetry = TelemetryCallback(queue, loop=loop)
     
     trainer = pl.Trainer(
         accelerator=accelerator,
@@ -105,9 +105,11 @@ def run_training_loop(session_id: str, config: TrainingConfig, app_state, queue:
     
     try:
         trainer.fit(model, datamodule=datamodule)
-        queue.put_nowait('{"type": "status", "status": "completed"}')
+        msg = '{"type": "status", "status": "completed"}'
+        loop.call_soon_threadsafe(queue.put_nowait, msg)
     except Exception as e:
-        queue.put_nowait(f'{{"type": "error", "message": "{str(e)}"}}')
+        msg = f'{{"type": "error", "message": "{str(e)}"}}'
+        loop.call_soon_threadsafe(queue.put_nowait, msg)
         
     # Rebuild indices
     build_faiss_indices(app_state, model, 'cpu') # Use CPU for building generic indices or accelerator if memory permits
@@ -125,12 +127,14 @@ async def start_training(config: TrainingConfig, background_tasks: BackgroundTas
         
     session_id = str(uuid.uuid4())
     queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    
     active_sessions[session_id] = {
         'queue': queue,
         'trainer': None
     }
     
-    background_tasks.add_task(run_training_loop, session_id, config, request.app.state, queue)
+    background_tasks.add_task(run_training_loop, session_id, config, request.app.state, queue, loop)
     
     return {"session_id": session_id, "status": "accepted"}
 

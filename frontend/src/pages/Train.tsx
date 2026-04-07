@@ -48,12 +48,16 @@ export default function Train() {
       };
       
       ws.onerror = (e) => {
-        setWsStatus('disconnected');
-        console.error(' [WebSocket] Error:', e);
+        if (wsRef.current === ws) {
+          setWsStatus('disconnected');
+          console.error(' [WebSocket] Error:', e);
+        }
       };
       
       ws.onclose = () => {
-        setWsStatus('disconnected');
+        if (wsRef.current === ws) {
+          setWsStatus('disconnected');
+        }
       };
 
       
@@ -112,9 +116,9 @@ export default function Train() {
 
   // Process telemetry for high-resolution batch-level chart
   const chartData = useMemo(() => {
-    let lastTrainLoss = undefined;
-    let lastValLoss = undefined;
-    let lastValR = undefined;
+    let lastTrainLoss: number | undefined = undefined;
+    let lastValLoss: number | undefined = undefined;
+    let lastValR: number | undefined = undefined;
     
     return telemetryHistory.map((curr, idx) => {
       if (curr.train_loss !== undefined) lastTrainLoss = curr.train_loss;
@@ -204,33 +208,35 @@ export default function Train() {
         {/* Telemetry Chart */}
         <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col">
           <h2 className="text-lg font-medium text-slate-300 border-b border-slate-800 pb-2 mb-4">Training Telemetry</h2>
-          <div className="flex-1 min-h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis 
-                  dataKey="step" 
-                  stroke="#64748b" 
-                  tick={{fill: '#64748b'}} 
-                  label={{ value: 'Training Steps', position: 'insideBottomRight', offset: -5, fill: '#64748b', fontSize: 12 }} 
-                />
-                <YAxis stroke="#64748b" tick={{fill: '#64748b'}} domain={['auto', 'auto']} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: '#0f1115', borderColor: '#1e293b', color: '#f1f5f9' }}
-                  itemStyle={{ color: '#f1f5f9' }}
-                  labelFormatter={(value, payload) => {
-                    const item = payload[0]?.payload;
-                    return item ? `Step ${value} (Epoch ${item.epoch}, Batch ${item.batch})` : `Step ${value}`;
-                  }}
-                />
-                <Legend />
-                <Line type="monotone" dataKey="train_loss" stroke="#2dd4bf" strokeWidth={2} dot={false} name="Train Loss" animationDuration={300} />
-                <Line type="monotone" dataKey="val_loss" stroke="#3b82f6" strokeWidth={2} dot={false} name="Val Loss" animationDuration={300} />
-              </LineChart>
-            </ResponsiveContainer>
-
+          <div className="flex-1 w-full relative min-h-[350px]">
+            <div className="absolute inset-0">
+              <ResponsiveContainer width="99%" height="100%">
+                <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis 
+                    dataKey="step" 
+                    stroke="#64748b" 
+                    tick={{fill: '#64748b'}} 
+                    label={{ value: 'Training Steps', position: 'insideBottomRight', offset: -5, fill: '#64748b', fontSize: 12 }} 
+                  />
+                  <YAxis stroke="#64748b" tick={{fill: '#64748b'}} domain={['auto', 'auto']} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: '#0f1115', borderColor: '#1e293b', color: '#f1f5f9' }}
+                    itemStyle={{ color: '#f1f5f9' }}
+                    labelFormatter={(value, payload) => {
+                      const item = payload[0]?.payload;
+                      return item ? `Step ${value} (Epoch ${item.epoch}, Batch ${item.batch})` : `Step ${value}`;
+                    }}
+                  />
+                  <Legend />
+                  <Line type="monotone" dataKey="train_loss" stroke="#2dd4bf" strokeWidth={2} dot={false} name="Train Loss" animationDuration={300} />
+                  <Line type="monotone" dataKey="val_loss" stroke="#3b82f6" strokeWidth={2} dot={false} name="Val Loss" animationDuration={300} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
+
         
       </div>
     </div>

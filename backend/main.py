@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
         logging.info("Loading metadata index...")
         app.state.metadata_df = pd.read_parquet(metadata_path)
         app.state.metadata_records = app.state.metadata_df.to_dict('records')
+        app.state.metadata_dict = {str(r.get("Object ID")): r for r in app.state.metadata_records if r.get("Object ID")}
         # Build a boolean mask aligned with the metadata rows.
         if "has_image" in app.state.metadata_df.columns:
             app.state.has_image_mask = torch.tensor(
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI):
     else:
         logging.warning("Metadata index not found.")
         app.state.metadata_records = []
+        app.state.metadata_dict = {}
         app.state.has_image_mask = torch.zeros(0, dtype=torch.bool)
         
     if images_path.exists() and images_path.stat().st_size > 1000:
@@ -209,3 +211,14 @@ async def get_locations():
         if "Latitude" in r and "Longitude" in r and pd.notna(r["Latitude"])
     ]
     return minimal_records
+
+@app.get("/api/metadata/item/{item_id}")
+async def get_item(item_id: str):
+    if not hasattr(app.state, 'metadata_dict'):
+        raise HTTPException(status_code=500, detail="Metadata dictionary not initialized")
+    
+    item = app.state.metadata_dict.get(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+        
+    return item
