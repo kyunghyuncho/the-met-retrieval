@@ -229,8 +229,8 @@ export default function Train() {
                     }}
                   />
                   <Legend />
-                  <Line type="monotone" dataKey="train_loss" stroke="#2dd4bf" strokeWidth={2} dot={false} name="Train Loss" animationDuration={300} />
-                  <Line type="monotone" dataKey="val_loss" stroke="#3b82f6" strokeWidth={2} dot={false} name="Val Loss" animationDuration={300} />
+                  <Line type="monotone" dataKey="train_loss" stroke="#2dd4bf" strokeWidth={2} dot={false} name="Train Loss" isAnimationActive={false} />
+                  <Line type="monotone" dataKey="val_loss" stroke="#3b82f6" strokeWidth={2} dot={false} name="Val Loss" isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
