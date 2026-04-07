@@ -142,6 +142,7 @@ async def abort_training(session_id: str):
 @router.websocket("/ws/telemetry/{session_id}")
 async def telemetry_websocket(websocket: WebSocket, session_id: str):
     await websocket.accept()
+    logging.info(f"WebSocket: Telemetry client connected for session {session_id}")
     
     if session_id not in active_sessions:
         await websocket.send_text('{"type": "error", "message": "Session not found"}')
@@ -159,6 +160,10 @@ async def telemetry_websocket(websocket: WebSocket, session_id: str):
             if "error" in msg:
                 break
     except WebSocketDisconnect:
-        pass
+        logging.info(f"WebSocket: Telemetry client disconnected for session {session_id}")
+    except Exception as e:
+        logging.error(f"WebSocket: Error in telemetry loop: {e}")
     finally:
         pass # Optional cleanup
+
+

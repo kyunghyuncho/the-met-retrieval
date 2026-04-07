@@ -140,13 +140,18 @@ class TelemetryCallback(pl.Callback):
         self.queue = queue
         
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        if batch_idx % 10 == 0:  # throttle updates
-            loss = outputs['loss'].item() if isinstance(outputs, dict) else outputs.item()
+        # We send telemetry every batch for smooth UI curves, 
+        # but avoid printing to terminal to keep logs clean.
+        train_loss = trainer.callback_metrics.get('train_loss') or \
+                     trainer.callback_metrics.get('train_loss_step') or \
+                     trainer.callback_metrics.get('train_loss_epoch')
+        
+        if train_loss is not None:
             msg = {
                 "type": "train_step",
                 "epoch": trainer.current_epoch,
                 "batch": batch_idx,
-                "train_loss": loss
+                "train_loss": train_loss.item()
             }
             self.queue.put_nowait(json.dumps(msg))
             
@@ -161,3 +166,8 @@ class TelemetryCallback(pl.Callback):
             "val_r_at_5": val_r_at_5.item() if val_r_at_5 is not None else None
         }
         self.queue.put_nowait(json.dumps(msg))
+        # Keep a single logging event per epoch
+        logging.info(f"Telemetry: Epoch {trainer.current_epoch} validation complete.")
+
+
+

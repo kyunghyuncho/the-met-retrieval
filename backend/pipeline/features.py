@@ -114,14 +114,34 @@ def main(batch_size: int = 64, num_workers: int = 4) -> None:
     # ------------------------------------------------------------------
     # Validate inputs
     # ------------------------------------------------------------------
-    for path in (INPUT_GEOCODED_PATH, INPUT_MANIFEST_PATH):
-        if not path.exists():
-            logging.error(
-                "Required input %s not found.  "
-                "Run the earlier pipeline stages first.",
-                path,
-            )
-            return
+    if not INPUT_GEOCODED_PATH.exists():
+        logging.error(f"Input {INPUT_GEOCODED_PATH} missing. Run geocode.py first.")
+        return
+
+    df = pd.read_parquet(INPUT_GEOCODED_PATH)
+    
+    if INPUT_MANIFEST_PATH.exists():
+        manifest = pd.read_parquet(INPUT_MANIFEST_PATH)
+        logging.info(f"Using manifest from {INPUT_MANIFEST_PATH}")
+    else:
+        logging.warning(f"Manifest {INPUT_MANIFEST_PATH} not found. Auto-scanning {DATA_DIR / 'images'}...")
+        image_dir = DATA_DIR / "images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Scan for files matching {index}.jpg
+        found_paths = {}
+        for img_path in image_dir.glob("*.jpg"):
+            try:
+                idx = int(img_path.stem)
+                found_paths[idx] = str(img_path)
+            except ValueError:
+                continue
+        
+        manifest = pd.DataFrame([
+            {"df_index": i, "local_path": found_paths.get(i)}
+            for i in range(len(df))
+        ])
+        logging.info(f"Auto-scan found {len(found_paths)} valid images.")
 
     # ------------------------------------------------------------------
     # Device selection
@@ -134,11 +154,7 @@ def main(batch_size: int = 64, num_workers: int = 4) -> None:
         device = torch.device("cpu")
     logging.info("Using device: %s", device)
 
-    # ------------------------------------------------------------------
-    # Load data
-    # ------------------------------------------------------------------
-    df = pd.read_parquet(INPUT_GEOCODED_PATH)
-    manifest = pd.read_parquet(INPUT_MANIFEST_PATH)
+
     logging.info(
         "Loaded %d artifacts; manifest covers %d entries (%d with images).",
         len(df),

@@ -48,16 +48,18 @@ async def lifespan(app: FastAPI):
         app.state.metadata_records = []
         app.state.has_image_mask = torch.zeros(0, dtype=torch.bool)
         
-    if images_path.exists():
+    if images_path.exists() and images_path.stat().st_size > 1000:
         logging.info("Loading unprojected images tensor...")
-        app.state.images_tensor = torch.load(images_path)
+        app.state.images_tensor = torch.load(images_path, weights_only=False)
     else:
+        logging.warning("Images tensor not found or empty. Run features.py first.")
         app.state.images_tensor = None
         
-    if texts_path.exists():
+    if texts_path.exists() and texts_path.stat().st_size > 1000:
         logging.info("Loading unprojected texts tensor...")
-        app.state.texts_tensor = torch.load(texts_path)
+        app.state.texts_tensor = torch.load(texts_path, weights_only=False)
     else:
+        logging.warning("Texts tensor not found or empty. Run features.py first.")
         app.state.texts_tensor = None
         
     app.state.index_images = None
@@ -91,6 +93,23 @@ app.add_middleware(
 )
 
 app.include_router(train_router)
+
+@app.get("/")
+async def root():
+    """System health and data status summary."""
+    n_total = len(app.state.metadata_records)
+    n_with_images = app.state.metadata_df["has_image"].sum() if "has_image" in app.state.metadata_df.columns else 0
+    n_with_coords = (app.state.metadata_df["Latitude"] != 0).sum() if "Latitude" in app.state.metadata_df.columns else 0
+    
+    return {
+        "status": "online",
+        "data_summary": {
+            "total_artifacts": n_total,
+            "with_images": int(n_with_images),
+            "with_coordinates": int(n_with_coords)
+        },
+        "docs": "/docs"
+    }
 
 class TextSearchQuery(BaseModel):
     query: str

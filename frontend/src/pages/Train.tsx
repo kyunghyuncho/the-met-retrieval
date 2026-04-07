@@ -14,15 +14,17 @@ export default function Train() {
 
   useEffect(() => {
     if (isTraining && sessionId) {
-      const ws = new WebSocket(`ws://localhost:8000/ws/telemetry/${sessionId}`);
+      const ws = new WebSocket(`ws://127.0.0.1:8000/ws/telemetry/${sessionId}`);
       
       ws.onopen = () => {
-        console.log('WebSocket connected');
+
+        console.log(' [WebSocket] Connected to telemetry for session:', sessionId);
       };
       
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+
           if (data.type === 'train_step' || data.type === 'val_epoch') {
             addTelemetry({
               epoch: data.epoch,
@@ -32,17 +34,19 @@ export default function Train() {
               val_r_at_5: data.val_r_at_5
             });
           } else if (data.status === 'completed') {
+            console.log(' [WebSocket] Training completed');
             setTrainingStatus(false, null);
             ws.close();
           }
         } catch (e) {
-          console.error("Error parsing telemetry", e);
+          console.error(" [WebSocket] Error parsing telemetry", e);
         }
       };
       
       ws.onerror = (e) => {
-        console.error('WebSocket error:', e);
+        console.error(' [WebSocket] Error:', e);
       };
+
       
       wsRef.current = ws;
       
@@ -65,7 +69,7 @@ export default function Train() {
         temperature_init: 0.07
       };
       
-      const res = await fetch('http://localhost:8000/api/train', {
+      const res = await fetch('http://127.0.0.1:8000/api/train', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -85,7 +89,7 @@ export default function Train() {
   const handleAbort = async () => {
     if (!sessionId) return;
     try {
-      await fetch(`http://localhost:8000/api/train/${sessionId}`, {
+      await fetch(`http://127.0.0.1:8000/api/train/${sessionId}`, {
         method: 'DELETE'
       });
       setTrainingStatus(false, null);
