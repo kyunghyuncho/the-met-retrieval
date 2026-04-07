@@ -153,7 +153,10 @@ class TelemetryCallback(pl.Callback):
             pass
         
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        # We send telemetry every batch for smooth UI curves.
+        # We send telemetry every 10 batches for smooth UI curves without overwhelming the frontend.
+        if batch_idx % 10 != 0:
+            return
+            
         try:
             train_loss = trainer.callback_metrics.get('train_loss')
             if train_loss is None: 
